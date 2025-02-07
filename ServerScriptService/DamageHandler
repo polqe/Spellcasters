@@ -1,0 +1,12 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local damageEvent = Instance.new("RemoteEvent")
+damageEvent.Name = "DamageEnemy"
+damageEvent.Parent = ReplicatedStorage
+
+damageEvent.OnServerEvent:Connect(function(player, enemyModel, damageAmount)
+	if enemyModel and enemyModel:FindFirstChild("Humanoid") then
+		local humanoid = enemyModel.Humanoid
+		humanoid.Health = math.max(humanoid.Health - damageAmount, 0)
+	end
+end)
