@@ -1,0 +1,16 @@
+-- ServerScriptService/EnemyHandler.lua
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local EnemyModule = require(ReplicatedStorage.Modules.Enemy)
+
+local function onEnemyHit(player, enemyModel, word)
+	local enemy = EnemyModule.new(enemyModel, word)
+	if enemy.Word == word then
+		enemy:TakeDamage(10) -- Adjust damage as needed
+	end
+end
+
+-- Example remote event setup
+local RemoteEvent = Instance.new("RemoteEvent", ReplicatedStorage)
+RemoteEvent.Name = "EnemyHit"
+
+RemoteEvent.OnServerEvent:Connect(onEnemyHit)
