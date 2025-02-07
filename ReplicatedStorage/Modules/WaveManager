@@ -1,0 +1,230 @@
+-- ReplicatedStorage/Modules/WaveManager.lua
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local EnemyModule = require(ReplicatedStorage.Modules.Enemy)
+local Players = game:GetService("Players")
+
+-- Require the WordList module
+local WordListModule = require(ReplicatedStorage.Modules.WordList)
+
+local WaveManager = {}
+
+function WaveManager.new()
+	local self = setmetatable({}, {__index = WaveManager})
+	self.CurrentWave = 1
+	self.WaveCostModifier = 5 -- Base cost modifier
+	self.PlayerCount = #Players:GetPlayers() -- Initial player count
+	self.IsWaveActive = false -- Tracks if the current wave is active
+	self.EnemiesAlive = 0 -- Tracks how many enemies are alive in the current wave
+
+	-- Load the word list from the WordList module
+	self.WordList = self:LoadWordList()
+
+	-- Listen for player added/removed events to update player count
+	Players.PlayerAdded:Connect(function()
+		self.PlayerCount = #Players:GetPlayers()
+		print("Player joined! Updated player count:", self.PlayerCount)
+	end)
+
+	Players.PlayerRemoving:Connect(function()
+		self.PlayerCount = #Players:GetPlayers()
+		print("Player left! Updated player count:", self.PlayerCount)
+	end)
+
+	return self
+end
+
+-- Function to load the word list from the WordList module
+function WaveManager:LoadWordList()
+	-- Use the WordList module to get the word list
+	local wordList = WordListModule:GetWords()
+	if not wordList or #wordList == 0 then
+		error("Word list failed to load or is empty!") -- Throw an error if the word list is invalid
+	end
+	print("Loaded", #wordList, "words from the WordList module.")
+	return wordList
+end
+
+-- Function to filter words by length
+function WaveManager:FilterWordsByLength(minLength, maxLength)
+	if not self.WordList or #self.WordList == 0 then
+		error("Word list is empty or nil!") -- Throw an error if the word list is invalid
+	end
+	local filteredWords = {}
+	for _, word in ipairs(self.WordList) do
+		if #word >= minLength and #word <= maxLength then
+			table.insert(filteredWords, word)
+		end
+	end
+	if #filteredWords == 0 then
+		warn("No words found in the specified length range!")
+		return {} -- Return an empty table instead of throwing an error
+	end
+	return filteredWords
+end
+
+-- Function to generate a random word for an enemy
+function WaveManager:GenerateRandomWord(enemyType)
+	local wordLengths = {
+		BasicEnemy = {min = 3, max = 4},
+		AdvancedEnemy = {min = 5, max = 7}, -- Example for future enemies
+		EliteEnemy = {min = 8, max = 10},   -- Example for future enemies
+	}
+	local lengthRange = wordLengths[enemyType]
+	if not lengthRange then
+		error("No word length range defined for enemy type: " .. tostring(enemyType))
+	end
+	local filteredWords = self:FilterWordsByLength(lengthRange.min, lengthRange.max)
+	if #filteredWords == 0 then
+		warn("No words found for enemy type:", enemyType)
+		return "ERROR"
+	end
+	local randomIndex = math.random(1, #filteredWords)
+	return filteredWords[randomIndex]
+end
+
+-- Function to spawn a single enemy
+function WaveManager:SpawnEnemy(enemyType, spawnPoint)
+	local enemyModel = ReplicatedStorage.EnemyModels[enemyType]:Clone()
+	if not enemyModel then
+		warn("Failed to clone enemy model:", enemyType)
+		return
+	end
+
+	-- Generate a random word for the enemy
+	local enemyWord = self:GenerateRandomWord(enemyType)
+
+	-- Position the enemy at the spawn point
+	enemyModel:SetPrimaryPartCFrame(CFrame.new(spawnPoint))
+
+	-- Set the word in the WordGui TextLabel
+	local wordGui = enemyModel:FindFirstChild("WordGui")
+	if wordGui and wordGui:IsA("BillboardGui") then
+		local textLabel = wordGui:FindFirstChild("TextLabel")
+		if textLabel and textLabel:IsA("TextLabel") then
+			textLabel.Text = enemyWord
+			-- Assign the word to the Word.Value property
+			local wordValue = Instance.new("StringValue")
+			wordValue.Name = "Word"
+			wordValue.Value = enemyWord
+			wordValue.Parent = enemyModel
+		else
+			warn("TextLabel not found in WordGui for enemy:", enemyType)
+		end
+	else
+		warn("WordGui not found for enemy:", enemyType)
+	end
+
+	-- Create an Enemy object
+	local enemy = EnemyModule.new(enemyModel, enemyWord)
+	enemyModel.Parent = workspace
+
+	-- Increment the count of alive enemies
+	self.EnemiesAlive += 1
+
+	-- Listen for when the enemy dies
+	enemyModel.Humanoid.Died:Connect(function()
+		self.EnemiesAlive -= 1
+		if self.EnemiesAlive == 0 and self.IsWaveActive then
+			print("All enemies defeated! Starting next wave...")
+			task.delay(5, function() -- Delay before starting the next wave
+				self:StartWave()
+			end)
+		end
+	end)
+
+	print("Spawned enemy:", enemyType, "with word:", enemyWord, "at position:", spawnPoint)
+end
+
+-- Function to start spawning enemies for the current wave
+function WaveManager:StartWave()
+	if self.IsWaveActive then
+		warn("A wave is already active!")
+		return
+	end
+	self.IsWaveActive = true
+	self.EnemiesAlive = 0
+
+	-- Calculate the total wave cost
+	local waveCost = self:CalculateWaveCost()
+	print("Starting wave", self.CurrentWave, "with total cost:", waveCost)
+
+	-- Define enemy types and their costs
+	local enemyTypes = {
+		BasicEnemy = 1,
+		AdvancedEnemy = 2,
+		EliteEnemy = 3,
+	}
+
+	-- Spawn enemies until the wave cost is depleted
+	while waveCost > 0 do
+		-- Randomly select an enemy type based on remaining cost
+		local availableEnemies = {}
+		for enemyType, cost in pairs(enemyTypes) do
+			if cost <= waveCost then
+				table.insert(availableEnemies, enemyType)
+			end
+		end
+		if #availableEnemies == 0 then
+			break -- No more enemies can be spawned
+		end
+
+		-- Randomly pick an enemy type
+		local selectedEnemy = availableEnemies[math.random(1, #availableEnemies)]
+		local selectedCost = enemyTypes[selectedEnemy]
+
+		-- Get a random spawn point
+		local spawnPoint = self:GetRandomSpawnPoint()
+		if not spawnPoint then
+			warn("No valid spawn point found!")
+			break
+		end
+
+		-- Spawn the enemy
+		self:SpawnEnemy(selectedEnemy, spawnPoint)
+
+		-- Deduct the cost from the wave cost
+		waveCost -= selectedCost
+
+		-- Wait before spawning the next enemy
+		task.wait(1)
+	end
+
+	-- Mark the wave as inactive once all enemies are spawned
+	self.IsWaveActive = false
+	self.CurrentWave += 1
+end
+
+-- Function to calculate the total wave cost based on player count and wave number
+function WaveManager:CalculateWaveCost()
+	-- Ensure there's at least one player
+	if self.PlayerCount == 0 then
+		warn("No players detected! Defaulting to 1 player.")
+		self.PlayerCount = 1
+	end
+	-- Scale difficulty exponentially with wave number and player count
+	return math.floor(self.WaveCostModifier * (self.CurrentWave ^ 1.2) * (self.PlayerCount ^ 0.8))
+end
+
+-- Function to get a random spawn point
+function WaveManager:GetRandomSpawnPoint()
+	local spawnPointsFolder = workspace:FindFirstChild("SpawnPoints")
+	if not spawnPointsFolder then
+		warn("SpawnPoints folder not found in Workspace!")
+		return nil
+	end
+	local spawnPoints = spawnPointsFolder:GetChildren()
+	if #spawnPoints == 0 then
+		warn("No spawn points found in SpawnPoints folder!")
+		return nil
+	end
+	local randomIndex = math.random(1, #spawnPoints)
+	local selectedSpawnPoint = spawnPoints[randomIndex]
+	if selectedSpawnPoint:IsA("BasePart") then
+		return selectedSpawnPoint.Position
+	else
+		warn("Selected spawn point is not a BasePart!")
+		return nil
+	end
+end
+
+return WaveManager
