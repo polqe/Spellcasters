@@ -1,0 +1,28 @@
+-- ReplicatedStorage/Modules/Enemy.lua
+local Enemy = {}
+Enemy.__index = Enemy
+
+function Enemy.new(model, word)
+	local self = setmetatable({}, Enemy)
+	self.Model = model
+	self.Word = word
+	self.Health = 100
+	self.MaxHealth = 100
+	self.IsAlive = true
+	return self
+end
+
+function Enemy:TakeDamage(amount)
+	if not self.IsAlive then return end
+	self.Health = math.max(self.Health - amount, 0)
+	if self.Health == 0 then
+		self:Die()
+	end
+end
+
+function Enemy:Die()
+	self.IsAlive = false
+	self.Model:Destroy()
+end
+
+return Enemy
