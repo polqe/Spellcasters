@@ -1,0 +1,165 @@
+-- ReplicatedStorage/Modules/PlayerController.lua
+local ContextActionService = game:GetService("ContextActionService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Events = ReplicatedStorage.Events
+local DamageEnemy = Events.DamageEnemy -- RemoteEvent to damage enemies
+local RequestNewWord = Events.RequestNewWord -- RemoteEvent to request new words
+
+local PlayerController = {}
+PlayerController.__index = PlayerController
+
+-- Constructor for PlayerController
+function PlayerController.new(player)
+	local self = setmetatable({}, PlayerController)
+	self.player = player
+	self.targetEnemy = nil -- Currently targeted enemy
+	self.currentWord = "" -- Word being typed
+	self.isListening = false -- Whether the script is listening for input
+	return self
+end
+
+-- Function to start listening for input
+function PlayerController:startListening()
+	if self.isListening then return end -- Prevent duplicate listeners
+	print("PlayerController is now listening for input!") -- Debugging line
+	self.isListening = true
+
+	-- Create a list of all keys EXCLUDING Spacebar
+	local allKeys = {}
+	for _, keyCode in ipairs(Enum.KeyCode:GetEnumItems()) do
+		if keyCode ~= Enum.KeyCode.Space then -- Exclude Spacebar
+			table.insert(allKeys, keyCode)
+		end
+	end
+
+	-- Bind all keys except Spacebar to a custom action
+	ContextActionService:BindAction("HandleKeyPress", function(_, inputState, inputObject)
+		if inputState == Enum.UserInputState.Begin then
+			local key = string.lower(inputObject.KeyCode.Name)
+			print("Key pressed:", key) -- Debugging line
+			self:handleKeyPress(key)
+		end
+	end, false, unpack(allKeys))
+end
+
+-- Function to stop listening for input
+function PlayerController:stopListening()
+	if not self.isListening then return end
+	print("PlayerController has stopped listening for input!") -- Debugging line
+	self.isListening = false
+	ContextActionService:UnbindAction("HandleKeyPress") -- Unbind the custom action
+end
+
+-- Function to handle key presses
+function PlayerController:handleKeyPress(key)
+	if not self.targetEnemy then
+		-- Find and target the closest enemy whose word starts with the key
+		self:findTarget(key)
+		-- If an enemy was successfully targeted, process the key as the first letter
+		if self.targetEnemy then
+			self:processWord(key)
+		end
+	else
+		-- Process the key as part of the current word
+		self:processWord(key)
+	end
+end
+
+-- Function to find and target the closest enemy
+function PlayerController:findTarget(key)
+	local closestEnemy = nil
+	local minDistance = math.huge
+
+	for _, enemyModel in pairs(workspace:GetChildren()) do
+		if enemyModel:FindFirstChild("WordGui") and enemyModel:FindFirstChild("Humanoid") then
+			local wordGui = enemyModel.WordGui
+			local textLabel = wordGui.TextLabel
+			local word = textLabel.Text
+
+			if string.sub(word, 1, 1) == key then
+				local distance = (self.player.Character.PrimaryPart.Position - enemyModel.PrimaryPart.Position).Magnitude
+				if distance < minDistance then
+					minDistance = distance
+					closestEnemy = enemyModel
+				end
+			end
+		end
+	end
+
+	if closestEnemy then
+		self.targetEnemy = closestEnemy
+		self.currentWord = closestEnemy.Word.Value -- Use the Word.Value property for consistency
+		print("Targeting enemy with word:", self.currentWord) -- Debugging line
+		-- Highlight the enemy's WordGui
+		self:highlightEnemy(closestEnemy, true)
+	else
+		print("No enemy found with word starting with:", key) -- Debugging line
+	end
+end
+
+-- Function to highlight or unhighlight an enemy's WordGui
+function PlayerController:highlightEnemy(enemy, shouldHighlight)
+	local wordGui = enemy:FindFirstChild("WordGui")
+	if wordGui then
+		local textLabel = wordGui.TextLabel
+		if textLabel then
+			textLabel.TextColor3 = shouldHighlight and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 255, 255)
+		end
+	end
+end
+
+-- Function to process the word as the player types
+function PlayerController:processWord(key)
+	local firstLetter = string.sub(self.currentWord, 1, 1)
+	if key == firstLetter then
+		self.currentWord = string.sub(self.currentWord, 2)
+		-- Update the TextLabel to show green for typed letters and white for remaining letters
+		self:updateTextLabel()
+		print("Remaining word:", self.currentWord) -- Debugging line
+
+		if #self.currentWord == 0 then
+			print("Word completed! Damaging enemy:", self.targetEnemy.Name)
+			-- Fire the DamageEnemy event to notify the server
+			DamageEnemy:FireServer(self.targetEnemy, 10) -- Adjust damage amount as needed
+
+			-- Check if the enemy is still alive
+			local humanoid = self.targetEnemy:FindFirstChildOfClass("Humanoid")
+			if humanoid and humanoid.Health > 0 then
+				-- Request a new word from the server
+				RequestNewWord:FireServer(self.targetEnemy)
+				-- Wait for the server to update the word
+				task.wait(0.1) -- Small delay to ensure the word is updated
+				self.currentWord = self.targetEnemy.Word.Value -- Update the current word
+				print("Assigned new word:", self.currentWord, "to enemy:", self.targetEnemy.Name)
+				self:updateTextLabel()
+			else
+				-- Remove the highlight from the enemy
+				self:highlightEnemy(self.targetEnemy, false)
+				-- Reset targeting
+				self.targetEnemy = nil
+			end
+		end
+	else
+		print("Incorrect key pressed:", key) -- Debugging line
+	end
+end
+
+-- Function to update the TextLabel with green and white colors
+function PlayerController:updateTextLabel()
+	local wordGui = self.targetEnemy:FindFirstChild("WordGui")
+	if wordGui then
+		local textLabel = wordGui:FindFirstChild("TextLabel")
+		if textLabel then
+			local originalWord = self.targetEnemy.Word.Value -- Use the Word.Value property for consistency
+			local typedLength = #originalWord - #self.currentWord
+			-- Green text for the typed portion
+			local greenText = string.sub(originalWord, 1, typedLength)
+			-- White text for the remaining portion
+			local whiteText = string.sub(originalWord, typedLength + 1)
+			-- Combine the green and white portions with proper HTML styling
+			textLabel.Text = string.format('<font color="#4FFF3A">%s</font><font color="#FFFFFF">%s</font>', greenText, whiteText)
+		end
+	end
+end
+
+return PlayerController
