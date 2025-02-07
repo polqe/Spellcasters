@@ -1,0 +1,81 @@
+-- ServerScriptService/GameController.lua
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local Events = ReplicatedStorage.Events
+local RequestNewWord = Events.RequestNewWord -- RemoteEvent for requesting new words
+local DamageEnemy = Events.DamageEnemy -- RemoteEvent to damage enemies
+local WaveManagerModule = require(ReplicatedStorage.Modules.WaveManager)
+
+-- Create a new WaveManager instance
+local waveManager = WaveManagerModule.new()
+
+-- Function to handle requests for new words
+RequestNewWord.OnServerEvent:Connect(function(player, enemyModel)
+	if not enemyModel or not enemyModel.Parent then
+		warn("Invalid enemy model provided!")
+		return
+	end
+
+	-- Dynamically determine the enemy type based on the model name
+	local enemyType = enemyModel.Name
+
+	-- Generate a new random word for the enemy
+	local newWord = waveManager:GenerateRandomWord(enemyType)
+	if newWord == "ERROR" then
+		warn("Failed to generate a new word for enemy:", enemyType)
+		return
+	end
+
+	-- Update the enemy's WordGui TextLabel
+	local wordGui = enemyModel:FindFirstChild("WordGui")
+	if wordGui then
+		local textLabel = wordGui:FindFirstChild("TextLabel")
+		if textLabel then
+			textLabel.Text = newWord
+			-- Update the Word.Value property
+			local wordValue = enemyModel:FindFirstChild("Word")
+			if wordValue then
+				wordValue.Value = newWord
+			else
+				warn("Word.Value property not found for enemy:", enemyType)
+			end
+		else
+			warn("TextLabel not found in WordGui for enemy:", enemyType)
+		end
+	else
+		warn("WordGui not found for enemy:", enemyType)
+	end
+end)
+
+-- Function to handle enemy damage
+DamageEnemy.OnServerEvent:Connect(function(player, enemyModel, damageAmount)
+	if not enemyModel or not enemyModel.Parent then
+		warn("Invalid enemy model provided!")
+		return
+	end
+
+	-- Get the enemy's humanoid
+	local humanoid = enemyModel:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		warn("No humanoid found for enemy:", enemyModel.Name)
+		return
+	end
+
+	-- Apply damage to the enemy
+	humanoid:TakeDamage(damageAmount)
+
+	-- Check if the enemy is defeated
+	if humanoid.Health <= 0 then
+		print("Enemy defeated:", enemyModel.Name)
+	end
+end)
+
+-- Function to start the game
+local function startGame()
+	print("Game started! Spawning first wave...")
+	waveManager:StartWave() -- Start the first wave
+end
+
+-- Automatically start the game after a delay (e.g., 5 seconds)
+task.wait(5) -- Adjust delay as needed
+startGame()
