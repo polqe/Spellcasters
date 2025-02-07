@@ -1,0 +1,18 @@
+-- ReplicatedStorage/Modules/Weapon.lua
+local Weapon = {}
+Weapon.__index = Weapon
+
+function Weapon.new(name, damage)
+	local self = setmetatable({}, Weapon)
+	self.Name = name
+	self.Damage = damage
+	return self
+end
+
+function Weapon:Attack(target)
+	if target and target.TakeDamage then
+		target:TakeDamage(self.Damage)
+	end
+end
+
+return Weapon
